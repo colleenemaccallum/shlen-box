@@ -1,0 +1,9 @@
+{
+  "name": "Shlen Box",
+  "short_name": "Shlen Box",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f5f3",
+  "theme_color": "#2f646d",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "shlen-box",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private two-person relationship inbox with a pre-send communication coach.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --no-warnings=ExperimentalWarning server/index.js",
+    "test": "node --no-warnings=ExperimentalWarning --test test/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.129.0",
+    "@simplewebauthn/server": "14.0.3",
+    "web-push": "3.6.7"
+  }
+}
