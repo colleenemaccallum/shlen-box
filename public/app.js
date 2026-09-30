@@ -436,9 +436,9 @@ const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeo
 
 function flagSheet() {
   const { r } = S.pending, v = r.versions[S.pending.vi % r.versions.length];
-  openSheet(`<b>One part may come across more harshly than you intend.</b>
-    ${r.phrase ? `<span class="k">What may cause a problem</span><div><span class="phrase">${esc(r.phrase)}</span></div>` : ''}
-    <span class="k">Why</span><div>${esc(r.why)}</div>
+  const issues = r.issues?.length ? r.issues : [{ phrase: r.phrase, why: r.why }];
+  openSheet(`<b>${issues.length > 1 ? `${issues.length} parts may come across more harshly than you intend.` : 'One part may come across more harshly than you intend.'}</b>
+    ${issues.map(i => `${i.phrase ? `<div><span class="phrase">${esc(i.phrase)}</span></div>` : ''}<div>${esc(i.why)}</div>`).join('')}
     <span class="k">Suggested version</span><div class="box">${esc(v)}</div>
     <button class="btn pri" data-s="use">Send this version</button>
     <div class="row2"><button class="btn" data-s="edit">Edit my own words</button><button class="btn" data-s="orig">Send original</button></div>

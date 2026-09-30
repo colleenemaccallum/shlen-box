@@ -34,7 +34,11 @@ const TASK = {
 
 Choose exactly one kind:
 - "clear": the message is likely to be understood as intended. This is the right answer for most messages, including ones that are direct, upset or firm. Do not flag a message just because it expresses a negative feeling or disagreement.
-- "flag": one specific phrase is likely to make the conversation worse, for example absolutes ("you never", "you always"), name-calling or labels, contempt or sarcasm, stating the other person's motive as fact, or swearing aimed at the person. Give "phrase" copied exactly from the draft, "why" in one or two plain sentences about how it may land (not about the author's character), and exactly three "versions": each is the whole message rewritten with only that problem fixed and everything else kept.
+- "flag": one or more phrases are likely to make the conversation worse: absolutes ("you never", "you always", "anything"), criticism of the person instead of the situation, name-calling or labels, contempt or sarcasm, stating the other person's motive as fact, threats to leave or ultimatums used as weapons, or swearing and anger aimed at the person. List EVERY such phrase in "issues" (up to 3, most harmful first), each with "phrase" copied exactly from the draft and "why": one or two plain sentences about how it may land with Person B (not about the author's character). Then give exactly three "versions", each the whole message rewritten so that ALL listed issues are fixed:
+  1. Light touch: the author's own words and length, minus the attacks. Name the feeling instead of aiming it ("I'm really frustrated" rather than "you piss me off").
+  2. Another light-touch wording.
+  3. If the draft asks for something or complains about something, a fuller version in this order: what happened, in plain facts; how the author feels; the specific request; why it would help them both; an opening to work it out together. Otherwise a third light-touch wording.
+  Versions keep the author's firmness and point. A clear boundary stays a clear boundary.
 - "clarify": the draft refers to something the other person could easily misread (for example "this" or "it" with no clear meaning). Give one short "question" and two or three short "options", each a few words that could replace the unclear words.
 - "safety": see the rules.
 
@@ -44,16 +48,16 @@ Fill fields you don't need with "" or [].`,
 - "main": what Person B said, in one or two sentences, in the third person ("Person B ...").
 - "request": what Person B is asking for, in one sentence, or "No direct request." if there is none.
 - "ask": one open question Person A could ask to understand better.
-- "heard": a short reflection Person A could send back, addressed to Person B as "you", starting with what they said (for example "you're worried that ..."). No agreement or apology added.
+- "heard": a short reflection Person A could send back, addressed to Person B as "you": first what they said or feel (for example "you're worried that ..."), then, where it honestly fits, one short line that their feeling makes sense ("I can see why that would be frustrating"). Understanding is not agreeing: no agreement, apology or promise added.
 Use kind "help", or "safety" per the rules (then fill the other fields with "").`,
   card: `Draft a short "Where are we?" summary card of this topic for both people to review. Points both people already agreed are listed in <agreed>; do not repeat them.
-Each point has a "section": "The issue" (one neutral point), "Still different" (one point per person where they differ, written as that person's own account, with "account_of" set to "Person A" or "Person B"), or "Open question" (one or two questions that would move things forward). Use "account_of": "" for everything else. Keep each point under 30 words, neutral, and without saying who is right.`,
+Each point has a "section": "The issue" (one neutral point), "Still different" (one point per person where they differ, written as that person's own account of what matters to them and why, the need underneath their position rather than only the position, with "account_of" set to "Person A" or "Person B"), or "Open question" (one or two questions that would move things forward). Use "account_of": "" for everything else. Keep each point under 30 words, neutral, and without saying who is right.`,
 };
 
 const obj = (props) => ({ type: 'object', properties: props, required: Object.keys(props), additionalProperties: false });
 const str = { type: 'string' }, strs = { type: 'array', items: str };
 const SCHEMA = {
-  check: obj({ kind: { type: 'string', enum: ['clear', 'flag', 'clarify', 'safety'] }, phrase: str, why: str, versions: strs, question: str, options: strs }),
+  check: obj({ kind: { type: 'string', enum: ['clear', 'flag', 'clarify', 'safety'] }, issues: { type: 'array', items: obj({ phrase: str, why: str }) }, versions: strs, question: str, options: strs }),
   clarify: obj({ text: str }),
   understand: obj({ kind: { type: 'string', enum: ['help', 'safety'] }, main: str, request: str, ask: str, heard: str }),
   card: obj({ points: { type: 'array', items: obj({
@@ -139,8 +143,9 @@ export function createAiCoach({ db, apiKey, client = null, now = () => new Date(
         return { kind: 'clarify', question: names.show(r.question), options: r.options.slice(0, 3).map(names.show) };
       }
       if (r.kind === 'flag' && r.versions.length) {
-        const phrase = names.show(r.phrase);
-        return { kind: 'flag', phrase: draft.includes(phrase) ? phrase : '', why: names.show(r.why), versions: r.versions.slice(0, 3).map(names.show) };
+        // A phrase not found in the draft is dropped rather than shown wrong; its reason is kept.
+        const issues = r.issues.slice(0, 3).map(i => { const phrase = names.show(i.phrase); return { phrase: draft.includes(phrase) ? phrase : '', why: names.show(i.why) }; });
+        return { kind: 'flag', issues, phrase: issues[0]?.phrase || '', why: issues[0]?.why || '', versions: r.versions.slice(0, 3).map(names.show) };
       }
       return { kind: 'clear' };
     },

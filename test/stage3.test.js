@@ -17,7 +17,7 @@ const fakeClient = { messages: {}, beta: { messages: { create: async params => {
   if (r?.raw) return r.raw;
   return { stop_reason: 'end_turn', usage: { input_tokens: 1000, output_tokens: 500 }, content: [{ type: 'text', text: JSON.stringify(r) }] };
 } } } };
-const blank = { phrase: '', why: '', versions: [], question: '', options: [] };
+const blank = { issues: [], versions: [], question: '', options: [] };
 
 before(async () => {
   db = openDb(':memory:');
@@ -53,24 +53,26 @@ test('setup and a short conversation', async () => {
 });
 
 test('a check sends only this topic, with names replaced, and returns the review', async () => {
-  next.push({ ...blank, kind: 'flag', phrase: 'you never', why: 'Person B may list exceptions.',
-    versions: ['Person B, it often feels like you skip this.', 'v2', 'v3'] });
-  const r = (await alex('POST', '/api/check', { text: 'Jordan you never plan ahead.', topic_id: topicId })).body;
+  next.push({ ...blank, kind: 'flag', issues: [{ phrase: 'you never', why: 'Person B may list exceptions.' }, { phrase: 'it drives me nuts', why: 'Aims the anger at Person B.' }],
+    versions: ['Person B, it often feels like you skip this, and I get frustrated.', 'v2', 'v3'] });
+  const r = (await alex('POST', '/api/check', { text: 'Jordan you never plan ahead and it drives me nuts.', topic_id: topicId })).body;
   const p = calls.at(-1);
   assert.equal(p.model, MODEL);
   assert.equal(p.output_config.format.type, 'json_schema');
   assert.ok(!/Alex|Jordan/.test(sentText()), 'no real names leave the server');
-  assert.ok(sentText().includes('Person B you never plan ahead.'));
+  assert.ok(sentText().includes('Person B you never plan ahead and it drives me nuts.'));
   assert.ok(sentText().includes('I always have to ask first'), 'recent messages of this topic are included');
   assert.ok(!sentText().includes('Secret from another topic'), 'other topics never are');
   assert.equal(r.kind, 'flag');
   assert.equal(r.phrase, 'you never');
   assert.equal(r.why, 'Jordan may list exceptions.', 'names are put back for the author');
-  assert.equal(r.versions[0], 'Jordan, it often feels like you skip this.');
+  assert.deepEqual(r.issues.map(i => i.phrase), ['you never', 'it drives me nuts'], 'every harsh part is listed');
+  assert.equal(r.issues[1].why, 'Aims the anger at Jordan.');
+  assert.equal(r.versions[0], 'Jordan, it often feels like you skip this, and I get frustrated.');
 });
 
 test('a flagged phrase that is not in the draft is dropped rather than shown wrong', async () => {
-  next.push({ ...blank, kind: 'flag', phrase: 'something else', why: 'w', versions: ['a'] });
+  next.push({ ...blank, kind: 'flag', issues: [{ phrase: 'something else', why: 'w' }], versions: ['a'] });
   const r = (await alex('POST', '/api/check', { text: 'Fine.', topic_id: topicId })).body;
   assert.equal(r.phrase, '');
 });
