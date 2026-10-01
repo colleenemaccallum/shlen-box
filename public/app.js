@@ -73,6 +73,7 @@ async function load() {
   try {
     S.data = await api('GET', '/api/state');
     if (S.screen === 'topic' || S.screen === 'card') S.topic = await api('GET', `/api/topics/${S.topicId}`);
+    markRead();
   } catch (e) {
     if (e.locked) return renderLocked();
     if (e.status === 401) { S.data = null; return renderWelcome(); }
@@ -85,6 +86,17 @@ async function go(screen, topicId) {
   S.screen = screen; if (topicId !== undefined) S.topicId = topicId;
   closeSheet(); await load(); window.scrollTo(0, 0);
 }
+
+// Tells the server which messages are on screen, for the other person's "Seen". Only while the
+// conversation is actually showing, and only when there is something new from them.
+function markRead() {
+  if (S.screen !== 'topic' || document.hidden || !S.topic) return;
+  const last = S.topic.messages.at(-1);
+  if (!last || last.id === S.readSent) return;
+  S.readSent = last.id;
+  api('POST', `/api/topics/${S.topicId}/read`, { message_id: last.id }).catch(() => { S.readSent = null; });
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && S.data) load(); });
 
 // Refresh quietly while the app is open, without disturbing typing or an open panel.
 setInterval(() => {
@@ -238,12 +250,15 @@ function home() {
 }
 
 function topicView() {
-  const { topic: t, messages, status_request: sr } = S.topic;
+  const { topic: t, messages, status_request: sr, seen } = S.topic;
+  // Under your newest message: "Seen" with the time once the other person has had it on screen, otherwise "Sent".
+  const myLast = [...messages].reverse().find(m => m.author === me().id && !m.deleted);
+  const receipt = m => m !== myLast ? '' : `<div class="receipt">${seen && seen.message_id >= m.id ? `Seen ${clock(seen.at)}` : 'Sent'}</div>`;
   const msgs = messages.map(m => {
     const mine = m.author === me().id;
     if (m.deleted) return `<div class="msg ${mine ? 'me' : ''}"><span class="who">${nameOf(m.author)}</span><span class="deleted">Message deleted</span></div>`;
     return `<div class="msg ${mine ? 'me' : ''}"><span class="who">${nameOf(m.author)} · ${clock(m.created)}</span><span>${esc(m.text)}</span>
-      ${mine ? `<button class="linkbtn" data-del="${m.id}">Delete</button>` : `<button class="linkbtn" data-help="${m.id}">Help me understand</button>`}</div>`;
+      ${mine ? `<button class="linkbtn" data-del="${m.id}">Delete</button>` : `<button class="linkbtn" data-help="${m.id}">Help me understand</button>`}</div>${receipt(m)}`;
   }).join('');
   return `<div class="top"><button class="iconbtn" data-act="home">‹ Topics</button><span>${pill(t)}</span></div>
     <h2>${esc(t.name)}</h2>

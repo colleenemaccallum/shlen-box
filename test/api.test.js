@@ -187,3 +187,14 @@ test('the same words sent twice within seconds are one message, not two', async 
   await alex('POST', `/api/topics/${topicId}/messages`, { text: 'Double tap test.' });
   assert.equal(count(), 2, 'saying it again later is a new message');
 });
+
+test('read receipts: the other person sees "Seen" only after the reader had the message on screen', async () => {
+  const id = (await alex('POST', `/api/topics/${topicId}/messages`, { text: 'Receipt check.' })).body.id;
+  assert.equal((await alex('GET', `/api/topics/${topicId}`)).body.seen?.message_id >= id, false, 'not seen yet');
+  await jordan('POST', `/api/topics/${topicId}/read`, { message_id: id });
+  const seen = (await alex('GET', `/api/topics/${topicId}`)).body.seen;
+  assert.equal(seen.message_id, id);
+  await jordan('POST', `/api/topics/${topicId}/read`, { message_id: 1 });
+  assert.equal((await alex('GET', `/api/topics/${topicId}`)).body.seen.message_id, id, 'never moves backward');
+  assert.equal((await jordan('GET', `/api/topics/${topicId}`)).body.seen?.message_id >= id, false, "your own reading isn't shown to you as Seen");
+});

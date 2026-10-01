@@ -170,9 +170,22 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
   route('GET', '/api/topics/:id', ({ me, params }) => {
     const t = topicOr404(params.id);
     const messages = q('SELECT id, author, created, deleted, CASE WHEN deleted = 1 THEN \'\' ELSE text END AS text FROM messages WHERE topic_id = ? ORDER BY id').all(t.id);
-    return { topic: t, messages, card: cardFor(t.id, me),
+    const other = people().find(p => p.id !== me.id);
+    const seen = other ? q('SELECT message_id, at FROM topic_reads WHERE topic_id = ? AND person_id = ?').get(t.id, other.id) || null : null;
+    return { topic: t, messages, card: cardFor(t.id, me), seen,
       status_request: q('SELECT by_person, to_status, checkin FROM status_requests WHERE topic_id = ?').get(t.id) || null,
       delete_request: q('SELECT by_person FROM delete_requests WHERE topic_id = ?').get(t.id) || null };
+  });
+
+  // Read receipt: the phone reports the newest message on screen. It only ever moves forward.
+  route('POST', '/api/topics/:id/read', ({ me, params, body }) => {
+    const t = topicOr404(params.id);
+    const m = q('SELECT id FROM messages WHERE topic_id = ? AND id <= ? ORDER BY id DESC LIMIT 1').get(t.id, Number(body.message_id) || 0);
+    if (!m) return { ok: true };
+    q(`INSERT INTO topic_reads (topic_id, person_id, message_id, at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(topic_id, person_id) DO UPDATE SET message_id = excluded.message_id, at = excluded.at WHERE excluded.message_id > topic_reads.message_id`)
+      .run(t.id, me.id, m.id, iso());
+    return { ok: true };
   });
 
   // The private check. Nothing in the request is stored or logged.
@@ -302,6 +315,7 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
   function wipeTopic(id) {
     for (const p of q('SELECT id FROM card_points WHERE topic_id = ?').all(id)) q('DELETE FROM card_confirmations WHERE point_id = ?').run(p.id);
     q('DELETE FROM card_points WHERE topic_id = ?').run(id);
+    q('DELETE FROM topic_reads WHERE topic_id = ?').run(id);
     q('DELETE FROM messages WHERE topic_id = ?').run(id);
     q('DELETE FROM status_requests WHERE topic_id = ?').run(id);
     q('DELETE FROM topics WHERE id = ?').run(id);

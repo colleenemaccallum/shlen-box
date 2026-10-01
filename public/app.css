@@ -68,6 +68,7 @@ p{margin:0}
 .who{font-size:.8125rem;opacity:.8}
 .linkbtn{justify-self:start;background:none;border:0;color:var(--accent);font-size:.875rem;padding:4px 0;min-height:36px;font-weight:700}
 .deleted{font-style:italic;color:var(--muted)}
+.receipt{justify-self:end;margin:-6px 6px 0 0;font-size:.75rem;color:var(--muted)}
 .composer{display:grid;gap:8px;background:var(--surface);border:var(--edge) solid var(--line);border-radius:calc(var(--radius) + 2px);padding:10px 12px}
 .composer:focus-within{border-color:var(--accent)}
 .privtag{font-size:.75rem;letter-spacing:.05em;text-transform:uppercase;color:var(--private);font-weight:700}

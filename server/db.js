@@ -81,6 +81,14 @@ CREATE TABLE IF NOT EXISTS messages (
   created TEXT NOT NULL,
   deleted INTEGER NOT NULL DEFAULT 0
 );
+-- Read receipts: the newest message each person has had on screen in each topic.
+CREATE TABLE IF NOT EXISTS topic_reads (
+  topic_id INTEGER NOT NULL REFERENCES topics(id),
+  person_id INTEGER NOT NULL REFERENCES people(id),
+  message_id INTEGER NOT NULL,
+  at TEXT NOT NULL,
+  PRIMARY KEY (topic_id, person_id)
+);
 CREATE TABLE IF NOT EXISTS card_points (
   id INTEGER PRIMARY KEY,
   topic_id INTEGER NOT NULL REFERENCES topics(id),
