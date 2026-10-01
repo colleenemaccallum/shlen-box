@@ -67,7 +67,8 @@ function toast(msg) { $toast.textContent = msg; $toast.hidden = false; clearTime
 const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 function buzz() { try { if (!IOS) navigator.vibrate?.(15); } catch {} }
 function hapticTrigger(el) {
-  if (!IOS || !el || el.querySelector('[data-haptic]')) return;
+  // Not on topic cards: a list you scroll through needs to take the finger, and the switch would hold it.
+  if (!IOS || !el || el.matches('.topic') || el.querySelector('[data-haptic]')) return;
   const s = document.createElement('input');
   s.type = 'checkbox'; s.setAttribute('switch', ''); s.setAttribute('data-haptic', ''); s.setAttribute('aria-hidden', 'true'); s.tabIndex = -1;
   Object.assign(s.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', margin: '0', opacity: '0', clipPath: 'inset(0 round 999px)', touchAction: 'pan-x pan-y' });
