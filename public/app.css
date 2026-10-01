@@ -68,6 +68,18 @@ p{margin:0}
 .who{font-size:.8125rem;opacity:.8}
 .linkbtn{justify-self:start;background:none;border:0;color:var(--accent);font-size:.875rem;padding:4px 0;min-height:36px;font-weight:700}
 .deleted{font-style:italic;color:var(--muted)}
+/* Photos, videos and files in messages, and the ones picked for the next message */
+.att-img{padding:0;border:0;background:none;justify-self:start;max-width:100%;border-radius:12px;overflow:hidden}
+.att-img img{display:block;max-width:100%;max-height:20rem;border-radius:12px}
+.att-vid{width:100%;max-height:22rem;border-radius:12px;background:#000}
+.att-file{display:grid;gap:2px;border:var(--edge) solid var(--line);border-radius:var(--radius);padding:10px 12px;text-decoration:none;color:inherit;overflow-wrap:anywhere}
+.picked{display:grid;gap:8px}
+.att-chip{display:flex;align-items:center;gap:10px;border:1.5px solid var(--line);border-radius:12px;padding:6px 10px}
+.att-chip img,.att-ico{width:44px;height:44px;border-radius:8px;flex:none}
+.att-chip img{object-fit:cover}
+.att-ico{display:grid;place-items:center;background:var(--accent-soft);font-size:.65rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase}
+.att-chip > span:not(.att-ico){flex:1;overflow-wrap:anywhere}
+.viewer{width:100%;max-height:70vh;object-fit:contain;border-radius:12px}
 .receipt{justify-self:end;margin:-6px 6px 0 0;font-size:.75rem;color:var(--muted)}
 .composer{display:grid;gap:8px;background:var(--surface);border:var(--edge) solid var(--line);border-radius:calc(var(--radius) + 2px);padding:10px 12px}
 .composer:focus-within{border-color:var(--accent)}

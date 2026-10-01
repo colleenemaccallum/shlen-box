@@ -7,7 +7,7 @@ const $app = document.getElementById('app');
 const $layer = document.getElementById('layer');
 const $toast = document.getElementById('toast');
 
-const S = { data: null, screen: 'home', topicId: null, topic: null, pending: null, urgentCat: null, error: null };
+const S = { data: null, screen: 'home', topicId: null, topic: null, pending: null, urgentCat: null, error: null, picked: {} };
 const STATUS = { open: 'Still open', try: 'Trying a fix', ok: 'Resolved' };
 const URGENT = ['Safety', 'Health', 'Kids & pickups', 'Home emergency', 'Time-sensitive plans'];
 
@@ -26,6 +26,30 @@ async function api(method, path, body) {
   const type = res.headers.get('content-type') || '';
   const out = type.includes('json') ? await res.json() : await res.text();
   if (!res.ok) throw Object.assign(new Error(out.error || 'Something went wrong.'), { status: res.status, locked: !!out.locked });
+  return out;
+}
+
+const FILE_MAX = 50 * 1024 * 1024, FILES_PER_MESSAGE = 6;
+const size = n => n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`;
+
+// Photos, videos and files picked for the next message. Like drafts, they stay on this phone
+// (in memory, while the app is open) and only go to the server when Send is tapped.
+const pickedFor = id => S.picked[id] || (S.picked[id] = []);
+function clearPicked(id) { for (const p of pickedFor(id)) if (p.url) URL.revokeObjectURL(p.url); S.picked[id] = []; }
+function pick(fileList) {
+  const list = pickedFor(S.topicId);
+  for (const file of fileList) {
+    if (list.length >= FILES_PER_MESSAGE) { toast(`Up to ${FILES_PER_MESSAGE} photos or files can go in one message.`); break; }
+    if (file.size > FILE_MAX) { toast(`“${file.name}” is too big. Photos and videos can be up to 50 MB (about a minute of video).`); continue; }
+    list.push({ file, url: file.type.startsWith('image/') ? URL.createObjectURL(file) : null, id: null });
+  }
+  render();
+}
+async function upload(file) {
+  const res = await fetch('/api/files', { method: 'POST', credentials: 'same-origin', body: file,
+    headers: { 'content-type': file.type || 'application/octet-stream', 'x-name': encodeURIComponent(file.name || 'file'), 'x-shlen': '1' } });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(out.error || "A photo or file couldn't be sent. Please try again."), { status: res.status, locked: !!out.locked });
   return out;
 }
 
@@ -113,7 +137,8 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && S.
 
 // Refresh quietly while the app is open, without disturbing typing or an open panel.
 setInterval(() => {
-  if (document.hidden || !S.data || $layer.innerHTML) return;
+  if (document.hidden || !S.data || $layer.innerHTML || sending) return;
+  if ([...document.querySelectorAll('video')].some(v => !v.paused)) return; // don't stop a video that's playing
   const a = document.activeElement;
   if (a && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT')) return;
   load();
@@ -262,6 +287,24 @@ function home() {
       : '<div class="row2"><button class="btn" data-act="pause">Take a break</button><button class="btn pri" data-act="write">Write something</button></div>'}`;
 }
 
+const fileUrl = (f, save) => `/api/files/${encodeURIComponent(f.id)}${save ? '?download' : ''}`;
+function attachments(m) {
+  return (m.files || []).map(f => f.kind === 'image'
+    ? `<button class="att-img" data-view="${esc(f.id)}" aria-label="Open photo"><img src="${fileUrl(f)}" alt="Photo" loading="lazy"></button>`
+    : f.kind === 'video'
+    ? `<video class="att-vid" src="${fileUrl(f)}" controls playsinline preload="metadata"></video><a class="linkbtn" href="${fileUrl(f, true)}" download="${esc(f.name)}">Save video</a>`
+    : `<a class="att-file" href="${fileUrl(f, true)}" download="${esc(f.name)}"><b>${esc(f.name)}</b><span class="small muted">${size(f.size)} · Download</span></a>`).join('');
+}
+
+function pickedView() {
+  const list = pickedFor(S.topicId);
+  if (!list.length) return '';
+  return `<div class="picked">${list.map((p, i) => `<div class="att-chip">
+    ${p.url ? `<img src="${p.url}" alt="">` : `<span class="att-ico">${p.file.type.startsWith('video/') ? 'Video' : 'File'}</span>`}
+    <span class="small">${esc(p.file.name)} · ${size(p.file.size)}</span>
+    <button class="linkbtn" data-unpick="${i}" aria-label="Remove ${esc(p.file.name)}">Remove</button></div>`).join('')}</div>`;
+}
+
 function topicView() {
   const { topic: t, messages, status_request: sr, seen } = S.topic;
   // Under your newest message: "Seen" with the time once the other person has had it on screen, otherwise "Sent".
@@ -270,8 +313,8 @@ function topicView() {
   const msgs = messages.map(m => {
     const mine = m.author === me().id;
     if (m.deleted) return `<div class="msg ${mine ? 'me' : ''}"><span class="who">${nameOf(m.author)}</span><span class="deleted">Message deleted</span></div>`;
-    return `<div class="msg ${mine ? 'me' : ''}"><span class="who">${nameOf(m.author)} · ${clock(m.created)}</span><span>${esc(m.text)}</span>
-      ${mine ? `<button class="linkbtn" data-del="${m.id}">Delete</button>` : `<button class="linkbtn" data-help="${m.id}">Help me understand</button>`}</div>${receipt(m)}`;
+    return `<div class="msg ${mine ? 'me' : ''}"><span class="who">${nameOf(m.author)} · ${clock(m.created)}</span>${attachments(m)}${m.text ? `<span>${esc(m.text)}</span>` : ''}
+      ${mine ? `<button class="linkbtn" data-del="${m.id}">Delete</button>` : m.text ? `<button class="linkbtn" data-help="${m.id}">Help me understand</button>` : ''}</div>${receipt(m)}`;
   }).join('');
   return `<div class="top"><button class="iconbtn" data-act="home">‹ Topics</button><span>${pill(t)}</span></div>
     <h2>${esc(t.name)}</h2>
@@ -283,6 +326,9 @@ function topicView() {
     <div class="composer"><span class="privtag">Private draft · only you see this</span>
       <label for="draft" class="small muted">Write it the way you actually feel it. Only your own words go in this box.</label>
       <textarea id="draft" maxlength="5000">${esc(getDraft(t.id))}</textarea>
+      ${pickedView()}
+      <input type="file" id="pick" multiple hidden>
+      <button class="btn quiet" data-act="pick">+ Photo, video or file</button>
       <div class="row2"><button class="btn quiet" data-act="organize">Help me organize this</button>
       <button class="btn pri" data-act="send">${pause() ? 'Keep as draft' : 'Send'}</button></div>
     </div>`;
@@ -380,6 +426,7 @@ function settings() {
     <button class="btn" data-act="mute" aria-pressed="${d.mute}">${d.mute ? 'Only urgent notifications (tap to get all)' : 'All notifications (tap for urgent only)'}</button>
     ${aiSection(d)}
     <span class="k">Your data</span>
+    ${d.storage ? `<p class="small muted">Photos and files use ${size(d.storage.used)}${d.storage.free != null ? `. The server has ${size(d.storage.free)} free` : ''}.</p>` : ''}
     <a class="btn" href="/api/export" download="shlen-box-export.txt">Download my export</a>
     ${d.partner ? wipe : ''}
     <button class="btn quiet" data-act="logout">Sign out on this phone</button>`;
@@ -406,6 +453,14 @@ function bind() {
     S.urgentCat = b.dataset.cat;
     $app.querySelectorAll('[data-cat]').forEach(x => x.setAttribute('aria-pressed', x === b));
   });
+  $app.querySelectorAll('[data-view]').forEach(b => b.onclick = () => viewPhoto(b.dataset.view));
+  $app.querySelectorAll('[data-unpick]').forEach(b => b.onclick = () => {
+    const [p] = pickedFor(S.topicId).splice(Number(b.dataset.unpick), 1);
+    if (p?.url) URL.revokeObjectURL(p.url);
+    render();
+  });
+  const picker = document.getElementById('pick');
+  if (picker) picker.onchange = () => pick(picker.files);
   const ta = document.getElementById('draft');
   if (ta) ta.oninput = () => setDraft(S.topicId, ta.value);
 }
@@ -432,6 +487,7 @@ async function act(a) {
     case 'newtopic': return newTopic();
     case 'endpause': return run(async () => { await api('POST', '/api/pause/end'); toast('Talking is open again.'); });
     case 'send': return send();
+    case 'pick': return document.getElementById('pick')?.click();
     case 'organize': return organize();
     case 'confstatus': return run(async () => { const r = await api('POST', `/api/topics/${S.topicId}/status/confirm`); toast(`Marked “${STATUS[r.status]}” by both of you.`); });
     case 'deltopic': return confirmSheet('Delete this whole topic?', `All its messages and its summary will be permanently deleted for both of you. ${partner().name} has to agree too.`, 'Delete topic',
@@ -475,12 +531,22 @@ function setStatus(to) {
 
 // One send at a time: a second tap while the first is still going does nothing.
 let sending = false;
-async function deliver(text, msg) {
+async function deliver(text, msg, withFiles = true) {
   if (sending) return;
   sending = true;
   $layer.querySelectorAll('.sheet .btn').forEach(b => { b.disabled = true; });
   try {
-    await api('POST', `/api/topics/${S.topicId}/messages`, { text });
+    // Photos and files go up first, one at a time, then the message that carries them.
+    const picked = withFiles ? pickedFor(S.topicId) : [], files = [];
+    for (const [i, p] of picked.entries()) {
+      if (!p.id) {
+        busy($app.querySelector('[data-act="send"]'), picked.length > 1 ? `Sending ${i + 1} of ${picked.length}…` : 'Sending…');
+        p.id = (await upload(p.file)).id;
+      }
+      files.push(p.id);
+    }
+    await api('POST', `/api/topics/${S.topicId}/messages`, { text, ...(files.length ? { files } : {}) });
+    if (picked.length) clearPicked(S.topicId);
     setDraft(S.topicId, ''); closeSheet();
     const box = document.getElementById('draft');
     if (box) box.value = '';
@@ -493,14 +559,16 @@ async function deliver(text, msg) {
 
 async function send() {
   const text = document.getElementById('draft').value.trim();
-  if (!text) return toast('Write something first.');
+  const picked = pickedFor(S.topicId).length;
+  if (!text && !picked) return toast('Write something first.');
   setDraft(S.topicId, text);
   if (pause()) return toast(`Kept as a private draft. You can send it after ${clock(pause().end)}.`);
   const b = $app.querySelector('[data-act="send"]');
   if (sending || b?.disabled) return;
   buzz();
   busy(b, 'Sending…');
-  try { await checkAndSend(text); } finally { busy(b, null, 'Send'); }
+  // The coach reads only words. A photo or file on its own goes straight out.
+  try { await (text ? checkAndSend(text) : deliver('', `Sent. ${partner().name} sees only what you sent.`)); } finally { busy(b, null, 'Send'); }
 }
 
 async function checkAndSend(text) {
@@ -611,7 +679,13 @@ async function understand(id) {
     <span class="k">A question you could ask</span><div class="box">${esc(h.ask)}</div>
     <span class="k">Reply by checking what you heard</span><div class="box">${esc(heard)}</div>
     ${pause() ? '' : '<button class="btn pri" data-s="heard">Send this reply</button>'}
-    <button class="btn quiet" data-s="close">Close</button>`, { heard: () => deliver(heard), close: closeSheet });
+    <button class="btn quiet" data-s="close">Close</button>`, { heard: () => deliver(heard, undefined, false), close: closeSheet });
+}
+
+function viewPhoto(id) {
+  const f = { id };
+  openSheet(`<img class="viewer" src="${fileUrl(f)}" alt="Photo"><a class="btn" href="${fileUrl(f, true)}" download>Save photo</a>
+    <button class="btn quiet" data-s="close">Close</button>`, { close: closeSheet });
 }
 
 function deleteMessage(id) {

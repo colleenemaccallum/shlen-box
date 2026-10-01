@@ -5,11 +5,13 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { tx, STARTER_TOPICS } from './db.js';
 import * as rules from './rules.js';
 import * as stand_in from './coach.js';
 import { CoachUnavailable } from './ai-coach.js';
+import { createFiles } from './files.js';
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -28,9 +30,11 @@ export const LOCK_AFTER_MS = 5 * 60e3;
 export const DUPLICATE_WINDOW_MS = 30e3;
 
 export function createApp({ db, now = () => new Date(), coach = stand_in, log = () => {}, secureCookies = false,
-  passkeys = null, notifier = { notify: () => [] }, vapidPublicKey = null }) {
+  passkeys = null, notifier = { notify: () => [] }, vapidPublicKey = null,
+  filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shlen-files-')) }) {
   const iso = () => now().toISOString();
   const q = sql => db.prepare(sql);
+  const files = createFiles({ db, dir: filesDir, now, fail });
 
   // ---------- helpers ----------
   const people = () => q('SELECT id, name, role FROM people ORDER BY role').all();
@@ -93,8 +97,9 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
 
   // ---------- routes ----------
   const routes = [];
-  const route = (method, pattern, handler, { auth = true, locked = false } = {}) =>
-    routes.push({ method, re: new RegExp('^' + pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)') + '$'), handler, auth, locked });
+  const route = (method, pattern, handler, { auth = true, locked = false, raw = false } = {}) =>
+    routes.push({ method, re: new RegExp('^' + pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)') + '$'), handler, auth, locked, raw });
+  const HANDLED = Symbol('handled'); // the handler wrote the response itself
 
   route('GET', '/api/setup', () => ({ people: people().length }), { auth: false });
 
@@ -139,7 +144,8 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
     const partner = partnerOf(me);
     const invite = !partner ? q('SELECT code FROM invites WHERE used = 0').get()?.code : undefined;
     const topics = q('SELECT * FROM topics ORDER BY updated DESC').all().map(t => {
-      const last = q('SELECT author, text, deleted FROM messages WHERE topic_id = ? ORDER BY id DESC LIMIT 1').get(t.id);
+      const last = q('SELECT id, author, text, deleted FROM messages WHERE topic_id = ? ORDER BY id DESC LIMIT 1').get(t.id);
+      if (last && !last.deleted) last.text = withFiles(last);
       return { ...t,
         status_request: q('SELECT by_person, to_status, checkin FROM status_requests WHERE topic_id = ?').get(t.id) || null,
         delete_request: q('SELECT by_person FROM delete_requests WHERE topic_id = ?').get(t.id) || null,
@@ -158,6 +164,7 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
       topics, stand_in_coach: !!coach.STAND_IN, ai: coach.status ? coach.status() : null,
       has_passkey: !!passkeys?.hasPasskey(me.id), passkeys_available: !!passkeys,
       mute: !!q('SELECT mute FROM people WHERE id = ?').get(me.id).mute, push_key: vapidPublicKey,
+      storage: files.usage(),
     };
   });
 
@@ -169,7 +176,8 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
 
   route('GET', '/api/topics/:id', ({ me, params }) => {
     const t = topicOr404(params.id);
-    const messages = q('SELECT id, author, created, deleted, CASE WHEN deleted = 1 THEN \'\' ELSE text END AS text FROM messages WHERE topic_id = ? ORDER BY id').all(t.id);
+    const messages = q('SELECT id, author, created, deleted, CASE WHEN deleted = 1 THEN \'\' ELSE text END AS text FROM messages WHERE topic_id = ? ORDER BY id').all(t.id)
+      .map(m => m.deleted ? m : { ...m, files: files.forMessage(m.id) });
     const other = people().find(p => p.id !== me.id);
     const seen = other ? q('SELECT message_id, at FROM topic_reads WHERE topic_id = ? AND person_id = ?').get(t.id, other.id) || null : null;
     return { topic: t, messages, card: cardFor(t.id, me), seen,
@@ -188,12 +196,17 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
     return { ok: true };
   });
 
+  // Words of a message, plus a note like "[photo]" when something was attached. The coach and the
+  // topic list only ever get this note, never the photo or file itself.
+  const withFiles = m => [m.text, files.describe(m.id)].filter(Boolean).join(' ');
+
   // The private check. Nothing in the request is stored or logged.
   // Context for the AI coach: the current topic only, never other topics.
   function coachContext(topicId, me) {
     const topic = topicId ? q('SELECT * FROM topics WHERE id = ?').get(topicId) : null;
     return { people: people(), authorId: me.id, readerId: me.id, topic,
-      messages: topic ? q('SELECT author, text, deleted FROM messages WHERE topic_id = ? ORDER BY id').all(topic.id) : [],
+      messages: topic ? q('SELECT id, author, text, deleted FROM messages WHERE topic_id = ? ORDER BY id').all(topic.id)
+        .map(m => m.deleted ? m : { ...m, text: withFiles(m) }) : [],
       card: topic ? cardFor(topic.id, me) : [] };
   }
   const pausedUntil = e => `Coaching is paused until ${new Date(e.until).toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' })} because this month's AI budget is used up.`;
@@ -230,16 +243,23 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
 
   route('POST', '/api/topics/:id/messages', ({ me, params, body }) => {
     const t = topicOr404(params.id);
-    const msg = text(body.text, rules.MESSAGE_MAX, 'The message');
+    const attached = files.claimable(body.files, me);
+    // A message can be just a photo or file; otherwise it needs words.
+    const msg = attached.length && !String(body.text ?? '').trim() ? '' : text(body.text, rules.MESSAGE_MAX, 'The message');
     if (activePause()) fail(423, 'Conversation is paused. Your message is kept as a private draft on your phone.');
+    // A retry after a slow connection brings the same files again: that message was already sent.
+    const sentWith = attached.find(f => f.message_id !== null);
+    if (sentWith) return { id: sentWith.message_id, duplicate: true };
     // A second tap (or a retry on a slow connection) sends the same words again within seconds:
     // that is the same message, not a new one.
     const last = q('SELECT id, text, created FROM messages WHERE topic_id = ? AND author = ? AND deleted = 0 ORDER BY id DESC LIMIT 1').get(t.id, me.id);
-    if (last && last.text === msg && now() - new Date(last.created) < DUPLICATE_WINDOW_MS) return { id: last.id, duplicate: true };
+    if (!attached.length && last && last.text === msg && now() - new Date(last.created) < DUPLICATE_WINDOW_MS) return { id: last.id, duplicate: true };
     const { lastInsertRowid: id } = tx(db, () => {
       if (t.status === 'ok') q("UPDATE topics SET status = 'open', checkin = NULL WHERE id = ?").run(t.id);
       touch(t.id);
-      return q('INSERT INTO messages (topic_id, author, text, created) VALUES (?, ?, ?, ?)').run(t.id, me.id, msg, iso());
+      const r = q('INSERT INTO messages (topic_id, author, text, created) VALUES (?, ?, ?, ?)').run(t.id, me.id, msg, iso());
+      files.attach(attached, Number(r.lastInsertRowid));
+      return r;
     });
     tellPartner(me, 'message', `New message in ${t.name}`);
     return { id: Number(id) };
@@ -248,20 +268,21 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
   route('POST', '/api/messages/:id/understand', ({ me, params }) => {
     const m = q('SELECT * FROM messages WHERE id = ? AND deleted = 0').get(params.id) || fail(404, 'That message was not found.');
     if (m.author === me.id) fail(400, 'Help me understand is for messages from your partner.');
+    if (!m.text) fail(400, 'Help me understand works on words, and this message is only a photo or file.');
     return coached(() => coach.understand(m.text, personById(m.author).name, coachContext(m.topic_id, me)));
   });
 
   route('DELETE', '/api/messages/:id', ({ me, params }) => {
     const m = q('SELECT * FROM messages WHERE id = ?').get(params.id) || fail(404, 'That message was not found.');
     if (m.author !== me.id) fail(403, 'You can only delete your own messages.');
-    q("UPDATE messages SET deleted = 1, text = '' WHERE id = ?").run(m.id);
+    tx(db, () => { q("UPDATE messages SET deleted = 1, text = '' WHERE id = ?").run(m.id); files.removeFor(m.id); });
     return { ok: true };
   });
 
   // Where we are: draft or refresh. Points both people agreed are kept as they are.
   route('POST', '/api/topics/:id/card', async ({ me, params }) => {
     const t = topicOr404(params.id);
-    const msgs = q('SELECT * FROM messages WHERE topic_id = ? ORDER BY id').all(t.id);
+    const msgs = q('SELECT * FROM messages WHERE topic_id = ? ORDER BY id').all(t.id).filter(m => m.deleted || m.text);
     if (!msgs.some(m => !m.deleted)) fail(400, 'There is nothing to summarize yet.');
     const drafted = await coached(() => coach.draftCard(t, msgs, people(), coachContext(t.id, me)));
     tx(db, () => {
@@ -316,6 +337,7 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
     for (const p of q('SELECT id FROM card_points WHERE topic_id = ?').all(id)) q('DELETE FROM card_confirmations WHERE point_id = ?').run(p.id);
     q('DELETE FROM card_points WHERE topic_id = ?').run(id);
     q('DELETE FROM topic_reads WHERE topic_id = ?').run(id);
+    for (const m of q('SELECT id FROM messages WHERE topic_id = ?').all(id)) files.removeFor(m.id);
     q('DELETE FROM messages WHERE topic_id = ?').run(id);
     q('DELETE FROM status_requests WHERE topic_id = ?').run(id);
     q('DELETE FROM topics WHERE id = ?').run(id);
@@ -389,6 +411,14 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
 
   route('POST', '/api/rules/cancel', () => { q('DELETE FROM rule_requests').run(); return { ok: true }; });
 
+  // ---------- photos, videos and files ----------
+  // Uploaded as part of tapping Send, just before the message itself (drafts stay on the phone).
+  route('POST', '/api/files', async ({ req, me }) => {
+    if (activePause()) { req.resume(); fail(423, 'Conversation is paused. Your message is kept as a private draft on your phone.'); }
+    return files.save(req, me);
+  }, { raw: true });
+  route('GET', '/api/files/:id', ({ req, res, me, params, query }) => { files.serve(req, res, params.id, me, query.has('download')); return HANDLED; });
+
   // ---------- passkeys, lock, notifications ----------
   const needPasskeys = () => passkeys || fail(501, 'Face ID sign-in is not available on this server.');
   route('GET', '/api/passkey/options', ({ me }) => needPasskeys().registrationOptions(me));
@@ -451,7 +481,7 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
       const pts = q('SELECT * FROM card_points WHERE topic_id = ? ORDER BY id').all(t.id);
       if (!msgs.length && !pts.length) continue;
       lines.push(`== ${t.name} (${{ open: 'Still open', try: 'Trying a fix', ok: 'Resolved' }[t.status]}) ==`);
-      for (const m of msgs) lines.push(`[${m.created}] ${names[m.author]}: ${m.deleted ? '(deleted)' : m.text}`);
+      for (const m of msgs) lines.push(`[${m.created}] ${names[m.author]}: ${m.deleted ? '(deleted)' : withFiles(m)}`);
       if (pts.length) lines.push('-- Where we are --', ...pts.map(p => `${p.section}: ${p.text} [${p.label === 'account' ? names[p.account_of] + "'s account" : p.label}]`));
       lines.push('');
     }
@@ -486,6 +516,7 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
 
   // Tell both people when a pause ends on its own. Called every minute by index.js (and directly by tests).
   function tick() {
+    files.purge();
     const ended = q('SELECT p.id FROM pauses p LEFT JOIN notified_pauses n ON n.pause_id = p.id WHERE n.pause_id IS NULL AND p.ended_early IS NULL AND p.end <= ?').all(iso());
     for (const p of ended) {
       q('INSERT OR IGNORE INTO notified_pauses (pause_id) VALUES (?)').run(p.id);
@@ -494,12 +525,12 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
   }
 
   const server = http.createServer(async (req, res) => {
-    const { pathname } = new URL(req.url, 'http://x');
+    const { pathname, searchParams: query } = new URL(req.url, 'http://x');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Strict-Transport-Security', 'max-age=31536000');
     res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; frame-ancestors 'none'");
+    res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self'; script-src 'self'; frame-ancestors 'none'");
     let status = 200;
     try {
       if (!pathname.startsWith('/api/')) { if (req.method !== 'GET') fail(405, 'Not allowed.'); return serveStatic(req, res, pathname); }
@@ -513,8 +544,9 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
       if (r.auth && !me) fail(401, 'Please sign in.');
       if (r.auth && session.locked && !r.locked) { status = 401; res.writeHead(401, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'Shlen Box is locked.', locked: true })); }
       if (session && !session.locked) seen(session.tokenHash);
-      const body = req.method === 'GET' ? {} : await readBody(req);
-      const out = await r.handler({ req, res, me, session, body, params: r.re.exec(pathname).groups || {} });
+      const body = req.method === 'GET' || r.raw ? {} : await readBody(req);
+      const out = await r.handler({ req, res, me, session, body, query, params: r.re.exec(pathname).groups || {} });
+      if (out === HANDLED) { status = res.statusCode; return; }
       if (out && out.__text !== undefined) { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end(out.__text); }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(out ?? {}));

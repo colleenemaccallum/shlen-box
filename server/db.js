@@ -81,6 +81,20 @@ CREATE TABLE IF NOT EXISTS messages (
   created TEXT NOT NULL,
   deleted INTEGER NOT NULL DEFAULT 0
 );
+-- Photos, videos and files sent with a message. The file itself is on disk under the random id.
+-- message_id is NULL only while a send is in progress. removed is set when its message is deleted:
+-- the file then stays (unreachable in the app) as long as the nightly database copies do, then goes.
+CREATE TABLE IF NOT EXISTS files (
+  id TEXT PRIMARY KEY,
+  owner INTEGER NOT NULL REFERENCES people(id),
+  message_id INTEGER,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  created TEXT NOT NULL,
+  removed TEXT
+);
+CREATE INDEX IF NOT EXISTS files_by_message ON files (message_id);
 -- Read receipts: the newest message each person has had on screen in each topic.
 CREATE TABLE IF NOT EXISTS topic_reads (
   topic_id INTEGER NOT NULL REFERENCES topics(id),
