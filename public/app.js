@@ -36,33 +36,35 @@ const setDraft = (id, v) => { try { v.trim() ? localStorage.setItem(draftKey(id)
 let toastTimer;
 function toast(msg) { $toast.textContent = msg; $toast.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $toast.hidden = true; }, 3500); }
 
-// A short buzz so a tap is felt. Android uses vibrate; iPhone Safari has no vibrate, but toggling a
-// hidden switch control gives its system tap (iOS 17.4 and later). Must run inside the tap itself.
-let $haptic;
-function buzz() {
-  try {
-    if (navigator.vibrate) return void navigator.vibrate(15);
-    if (!$haptic) {
-      $haptic = document.createElement('label');
-      $haptic.ariaHidden = 'true';
-      $haptic.style.cssText = 'position:fixed;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;left:-9px';
-      $haptic.innerHTML = '<input type="checkbox" switch tabindex="-1">';
-      document.body.append($haptic);
-    }
-    $haptic.click();
-  } catch {}
+// A short buzz so a tap is felt. Android: vibrate. iPhone Safari has no vibrate and ignores switches
+// toggled by code, so an invisible native switch is laid over the button: the finger's own tap flips
+// it, which gives the system tap feel (iOS 18+), and the tap still reaches the button.
+// Adapted from ios-haptics by tijn.dev (MIT).
+const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function buzz() { try { if (!IOS) navigator.vibrate?.(15); } catch {} }
+function hapticTrigger(el) {
+  if (!IOS || !el || el.querySelector('[data-haptic]')) return;
+  const s = document.createElement('input');
+  s.type = 'checkbox'; s.setAttribute('switch', ''); s.setAttribute('data-haptic', ''); s.setAttribute('aria-hidden', 'true'); s.tabIndex = -1;
+  Object.assign(s.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', margin: '0', opacity: '0', clipPath: 'inset(0 round 999px)', touchAction: 'pan-x pan-y' });
+  s.style.setProperty('-webkit-tap-highlight-color', 'transparent');
+  if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
+  el.append(s);
 }
+
 // Shows a button as working (label, or null to restore it to `idle`) so a slow answer can't be tapped twice.
 function busy(b, label, idle) {
   if (!b) return;
   b.disabled = !!label;
   b.textContent = label || idle || b.textContent;
+  hapticTrigger(b);
 }
 
 function openSheet(html, handlers = {}) {
   $layer.innerHTML = `<div class="sheetwrap" data-close="1"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
   $layer.querySelector('.sheetwrap').addEventListener('click', e => { if (e.target.dataset.close) closeSheet(); });
   $layer.querySelectorAll('[data-s]').forEach(b => b.addEventListener('click', () => handlers[b.dataset.s]?.(b)));
+  $layer.querySelectorAll('.btn.pri').forEach(hapticTrigger);
   $layer.querySelector('button, input')?.focus();
 }
 const closeSheet = () => { $layer.innerHTML = ''; };
@@ -376,6 +378,7 @@ function settings() {
 function bind() {
   $app.querySelectorAll('[data-topic]').forEach(b => b.onclick = () => go('topic', Number(b.dataset.topic)));
   $app.querySelectorAll('[data-act]').forEach(b => b.onclick = () => act(b.dataset.act));
+  hapticTrigger($app.querySelector('[data-act="send"]'));
   $app.querySelectorAll('[data-help]').forEach(b => b.onclick = () => understand(Number(b.dataset.help)));
   $app.querySelectorAll('[data-del]').forEach(b => b.onclick = () => deleteMessage(Number(b.dataset.del)));
   $app.querySelectorAll('[data-conf]').forEach(b => b.onclick = () => run(async () => {
