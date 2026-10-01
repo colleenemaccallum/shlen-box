@@ -19,6 +19,8 @@ rm -rf "$WORK/test"
 cd "$WORK" && npm ci --omit=dev --no-audit --no-fund >/dev/null
 echo "${VERSION:-unknown} $(date -u +%F)" > "$WORK/VERSION"
 chown -R root:root "$WORK"
+# mktemp makes a private folder; the app runs as the shlen user, so it must be readable.
+chmod 755 "$WORK"
 
 rm -rf "$APP.previous"
 mv "$APP" "$APP.previous"
