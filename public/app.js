@@ -427,21 +427,31 @@ async function send() {
   if (r.kind === 'capped') return notChecked(r.message);
   S.pending = { text, r, vi: 0 };
   if (r.kind === 'clear') return deliver(text, 'Looks clear · Sent');
-  if (r.kind === 'safety') return safetySheet(true);
+  if (r.kind === 'safety') return safetySheet(true, r.safety_type || '');
   if (r.kind === 'clarify') return clarifySheet();
   flagSheet();
 }
 
 const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
 
+const ISSUE_LABEL = {
+  unanswered: 'Question not answered yet', new_issue: 'A separate issue', stronger_claim: 'Replying to more than was said',
+  sarcastic_agreement: 'Sarcasm', not_said: 'Answering something not said', loop: 'Going in circles', wording: 'Wording',
+};
+
 function flagSheet() {
   const { r } = S.pending, v = r.versions[S.pending.vi % r.versions.length];
   const issues = r.issues?.length ? r.issues : [{ phrase: r.phrase, why: r.why }];
-  openSheet(`<b>${issues.length > 1 ? `${issues.length} parts may come across more harshly than you intend.` : 'One part may come across more harshly than you intend.'}</b>
-    ${issues.map(i => `${i.phrase ? `<div><span class="phrase">${esc(i.phrase)}</span></div>` : ''}<div>${esc(i.why)}</div>`).join('')}
+  const structural = issues.some(i => i.type && i.type !== 'wording');
+  // A version with a [placeholder] needs the author's own answer, so it can't be sent as is.
+  const needsAnswer = /\[[^\]]+\]/.test(v);
+  openSheet(`<b>${structural ? 'This may pull the conversation off track.' : issues.length > 1 ? `${issues.length} parts may come across more harshly than you intend.` : 'One part may come across more harshly than you intend.'}</b>
+    ${r.question_asked ? `<span class="k">${esc(partner().name)} asked</span><div class="box">${esc(r.question_asked)}</div>` : ''}
+    ${issues.map(i => `<span class="k">${esc(ISSUE_LABEL[i.type] || 'What may cause a problem')}</span>${i.phrase ? `<div><span class="phrase">${esc(i.phrase)}</span></div>` : ''}<div>${esc(i.why)}</div>`).join('')}
     <span class="k">Suggested version</span><div class="box">${esc(v)}</div>
-    <button class="btn pri" data-s="use">Send this version</button>
-    <div class="row2"><button class="btn" data-s="edit">Edit my own words</button><button class="btn" data-s="orig">Send original</button></div>
+    ${needsAnswer ? '<p class="small muted">Fill in the part in brackets with your own answer.</p><button class="btn pri" data-s="edit">Write my answer</button>' : '<button class="btn pri" data-s="use">Send this version</button>'}
+    <div class="row2">${needsAnswer ? '' : '<button class="btn" data-s="edit">Edit my own words</button>'}<button class="btn" data-s="orig">Send original</button></div>
+    ${r.new_topic ? `<button class="btn quiet" data-s="topic">Start a topic: ${esc(r.new_topic)}</button>` : ''}
     <div class="row3"><button class="btn quiet small" data-s="another">Another version</button><button class="btn quiet small" data-s="save">Save</button><button class="btn quiet small" data-s="break">Take a break</button></div>`, {
     use: () => deliver(v, `Sent. ${partner().name} sees only this version.`),
     edit: () => { closeSheet(); document.getElementById('draft')?.focus(); },
@@ -449,6 +459,10 @@ function flagSheet() {
     another: () => { S.pending.vi++; flagSheet(); },
     save: () => { closeSheet(); toast('Draft saved on this phone only.'); },
     break: () => go('pause'),
+    topic: async () => {
+      try { await api('POST', '/api/topics', { name: r.new_topic }); toast(`Started “${r.new_topic}”. You can raise it there.`); } catch (e) { toast(e.message); }
+      delete r.new_topic; flagSheet();
+    },
   });
 }
 
@@ -472,20 +486,39 @@ function previewSheet(title, text) {
     { send: () => deliver(text), own: closeSheet });
 }
 
-function safetySheet(author) {
+// What the person sees depends on what was written (coaching guide v2, Safety mode).
+function safetySheet(author, type = '') {
+  const lines = {
+    harm: '<b>1-800-799-7233</b> National Domestic Violence Hotline (call, or text START to 88788)<br><b>911</b> for immediate danger',
+    self_harm: '<b>988</b> Suicide &amp; Crisis Lifeline (call or text)<br><b>911</b> for immediate danger',
+    threatened: '<b>1-800-799-7233</b> National Domestic Violence Hotline (call, or text START to 88788)<br><b>911</b> for immediate danger',
+    '': '<b>988</b> Suicide &amp; Crisis Lifeline (call or text)<br><b>1-800-799-7233</b> National Domestic Violence Hotline<br><b>911</b> for immediate danger',
+  }[type] ?? '';
+  const text = author ? {
+    harm: "This message talks about hurting someone. Shlen Box won't suggest a rewrite for this. If anyone may be in danger, please reach out now.",
+    self_harm: "It sounds like you may be going through something really hard. You don't have to handle it alone, and you can talk to someone right now.",
+    threatened: "It sounds like you may not feel safe. Shlen Box isn't the right tool for this, and you don't need to soften how you say it. Support is available.",
+    '': "Part of this message talks about harm. Shlen Box won't suggest a rewrite for this. If anyone may be in danger, please reach out for support.",
+  }[type] : {
+    harm: "This message talks about hurting someone. Shlen Box won't summarize it. If you or anyone else may be in danger, please reach out now.",
+    self_harm: "This message talks about self-harm. Shlen Box won't summarize it. If you're worried about them, you can call 988 for advice on how to help.",
+    threatened: "Shlen Box won't summarize this message. If anyone may be in danger, please reach out for support.",
+    '': "Shlen Box won't summarize this message. If anyone may be in danger, please reach out for support.",
+  }[type];
   openSheet(`<b>${author ? 'Before you send this' : 'This message mentions safety'}</b>
-    <p>${author ? "Part of this message talks about harm. Shlen Box won't suggest a rewrite for this." : "Shlen Box won't summarize this message."} If anyone may be in danger, please reach out for support.</p>
-    <div class="box"><b>988</b> Suicide &amp; Crisis Lifeline (call or text)<br><b>1-800-799-7233</b> National Domestic Violence Hotline<br><b>911</b> for immediate danger</div>
-    ${author ? '<button class="btn" data-s="save">Keep as draft</button><button class="btn quiet" data-s="send">Send anyway</button>' : '<button class="btn" data-s="close">Close</button>'}`,
+    <p>${text ?? ''}</p>
+    <div class="box">${lines}</div>
+    ${author ? '<button class="btn" data-s="save">Keep as draft</button><button class="btn quiet" data-s="send">Send as written</button>' : '<button class="btn" data-s="close">Close</button>'}`,
     { save: closeSheet, close: closeSheet, send: () => deliver(S.pending.text) });
 }
 
 async function understand(id) {
   let h;
   try { h = await api('POST', `/api/messages/${id}/understand`); } catch (e) { return toast(e.message); }
-  if (h.kind === 'safety') return safetySheet(false);
+  if (h.kind === 'safety') return safetySheet(false, h.safety_type || '');
   const heard = `Here's what I heard: ${h.heard || h.main.replace(/^.*? wrote: /, '')} Is that right?`;
   openSheet(`<b>Help me understand</b><p class="small muted">Only you can see this. It restates what was written. It doesn't guess why.</p>
+    ${h.question ? `<span class="k">Their question, to answer first</span><div class="box">${esc(h.question)}</div>` : ''}
     <span class="k">What they said</span><div>${esc(h.main)}</div>
     <span class="k">Request</span><div>${esc(h.request)}</div>
     <span class="k">A question you could ask</span><div class="box">${esc(h.ask)}</div>

@@ -17,7 +17,7 @@ const fakeClient = { messages: {}, beta: { messages: { create: async params => {
   if (r?.raw) return r.raw;
   return { stop_reason: 'end_turn', usage: { input_tokens: 1000, output_tokens: 500 }, content: [{ type: 'text', text: JSON.stringify(r) }] };
 } } } };
-const blank = { issues: [], versions: [], question: '', options: [] };
+const blank = { safety_type: '', question_asked: '', issues: [], versions: [], new_topic: '', question: '', options: [] };
 
 before(async () => {
   db = openDb(':memory:');
@@ -77,6 +77,30 @@ test('a flagged phrase that is not in the draft is dropped rather than shown wro
   assert.equal(r.phrase, '');
 });
 
+test('a reply that skips the question is flagged as a structure problem, with a separate topic offered', async () => {
+  next.push({ ...blank, kind: 'flag', question_asked: 'Did Person B take Rosie out?',
+    issues: [{ type: 'unanswered', phrase: '', why: 'The question was whether Rosie went out.' },
+      { type: 'sarcastic_agreement', phrase: 'Sure, because all I do is yell', why: 'Turns the question into whether Person A is a bad person.' }],
+    versions: ['[your answer] Separately, I want to talk about the yelling.', 'v2', 'v3'], new_topic: 'Yelling around the kids' });
+  const r = (await alex('POST', '/api/check', { text: 'Sure, because all I do is yell.', topic_id: topicId })).body;
+  assert.deepEqual(r.issues.map(i => i.type), ['unanswered', 'sarcastic_agreement']);
+  assert.equal(r.issues[1].phrase, 'Sure, because all I do is yell');
+  assert.equal(r.question_asked, 'Did Jordan take Rosie out?');
+  assert.equal(r.new_topic, 'Yelling around the kids');
+});
+
+test('safety is split by what was written, and figures of speech go to the coach', async () => {
+  const before = calls.length;
+  assert.deepEqual((await alex('POST', '/api/check', { text: "I'm going to hurt you", topic_id: topicId })).body, { kind: 'safety', safety_type: 'harm' });
+  assert.deepEqual((await alex('POST', '/api/check', { text: 'Some days I want to die', topic_id: topicId })).body, { kind: 'safety', safety_type: 'self_harm' });
+  assert.equal(calls.length, before, 'clear cases are caught before anything is sent');
+  next.push({ ...blank, kind: 'flag', issues: [{ type: 'wording', phrase: 'I could kill you', why: 'w' }], versions: ['a'] });
+  assert.equal((await alex('POST', '/api/check', { text: 'I could kill you for eating my leftovers', topic_id: topicId })).body.kind, 'flag');
+  assert.equal(calls.length, before + 1, 'a figure of speech is coached normally');
+  next.push({ ...blank, kind: 'safety', safety_type: 'threatened' });
+  assert.deepEqual((await alex('POST', '/api/check', { text: 'You scare me when you block the door', topic_id: topicId })).body, { kind: 'safety', safety_type: 'threatened' });
+});
+
 test('clear, clarify, and safety', async () => {
   next.push({ ...blank, kind: 'clear' });
   assert.equal((await alex('POST', '/api/check', { text: 'Can we talk tonight?', topic_id: topicId })).body.kind, 'clear');
@@ -92,18 +116,20 @@ test('clear, clarify, and safety', async () => {
 });
 
 test('help me understand restates from the reader side', async () => {
-  next.push({ kind: 'help', main: 'Person B feels they always have to ask first.', request: 'No direct request.',
+  next.push({ kind: 'help', safety_type: '', question: 'Can we talk tonight?', main: 'Person B feels they always have to ask first.', request: 'No direct request.',
     ask: 'What would feel fairer to you?', heard: "you feel you always have to ask me first" });
   const h = (await alex('POST', `/api/messages/${jordanMsg}/understand`)).body;
   assert.ok(!/Alex|Jordan/.test(sentText()));
   assert.equal(h.main, 'Jordan wrote: Jordan feels they always have to ask first.');
   assert.equal(h.heard, 'you feel you always have to ask me first');
+  assert.equal(h.question, 'Can we talk tonight?');
 });
 
 test('the card drafts points and links each account to its person', async () => {
   next.push({ points: [
     { section: 'The issue', text: 'How spending decisions get made.', account_of: '' },
     { section: 'Still different', text: 'Person B feels they always ask first.', account_of: 'Person B' },
+    { section: 'In their words', text: '"I always have to ask first."', account_of: 'Person B' },
     { section: 'Open question', text: 'What amount needs a check-in?', account_of: '' },
   ] });
   assert.equal((await alex('POST', `/api/topics/${topicId}/card`)).status, 200);
@@ -112,6 +138,8 @@ test('the card drafts points and links each account to its person', async () => 
   assert.equal(acct.text, 'Jordan feels they always ask first.');
   assert.equal(acct.label, 'account');
   assert.equal(acct.account_of, (await alex('GET', '/api/state')).body.partner.id);
+  const quote = card.find(p => p.section === 'In their words');
+  assert.deepEqual([quote.text, quote.label], ['Jordan wrote: "I always have to ask first."', 'draft'], 'a quote is a note both confirm');
 });
 
 test('when the AI fails or refuses, the author is told and can still send', async () => {
