@@ -14,6 +14,8 @@ import { CoachUnavailable } from './ai-coach.js';
 import { createFiles } from './files.js';
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
+// Changes whenever an update changes the phone app, so open phones know to reload.
+const BUILD = crypto.createHash('sha256').update(['app.js', 'app.css'].map(f => { try { return fs.readFileSync(path.join(PUBLIC, f)); } catch { return ''; } }).join('')).digest('hex').slice(0, 12);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8' };
 const BODY_LIMIT = 16 * 1024;
@@ -161,7 +163,7 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
       pauses_recent: q('SELECT by_person, start, end, ended_early FROM pauses WHERE start > ? ORDER BY id DESC')
         .all(new Date(now().getTime() - 48 * 3600e3).toISOString()),
       urgent: q('SELECT * FROM urgent ORDER BY id DESC LIMIT 50').all(),
-      topics, stand_in_coach: !!coach.STAND_IN, ai: coach.status ? coach.status() : null,
+      build: BUILD, topics, stand_in_coach: !!coach.STAND_IN, ai: coach.status ? coach.status() : null,
       has_passkey: !!passkeys?.hasPasskey(me.id), passkeys_available: !!passkeys,
       mute: !!q('SELECT mute FROM people WHERE id = ?').get(me.id).mute, push_key: vapidPublicKey,
       storage: files.usage(),

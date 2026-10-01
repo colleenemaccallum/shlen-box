@@ -124,6 +124,12 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $layer.inn
 async function load() {
   try {
     S.data = await api('GET', '/api/state');
+    // An update reached the server: reload once to get the new app (drafts are kept on the phone).
+    S.build ??= S.data.build;
+    if (S.data.build && S.data.build !== S.build) {
+      try { sessionStorage.setItem('shlen:where', JSON.stringify({ screen: S.screen, topicId: S.topicId })); } catch {}
+      return location.reload();
+    }
     if (S.screen === 'topic' || S.screen === 'card') S.topic = await api('GET', `/api/topics/${S.topicId}`);
     markRead();
   } catch (e) {
@@ -150,14 +156,25 @@ function markRead() {
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden && S.data) load(); });
 
-// Refresh quietly while the app is open, without disturbing typing or an open panel.
-setInterval(() => {
-  if (document.hidden || !S.data || $layer.innerHTML || sending) return;
+// Refresh quietly while the app is open, without disturbing typing or an open panel. While typing,
+// only the "Sent" / "Seen" line is brought up to date.
+setInterval(async () => {
+  if (document.hidden || !S.data || sending) return;
   if ([...document.querySelectorAll('video')].some(v => !v.paused)) return; // don't stop a video that's playing
   const a = document.activeElement;
-  if (a && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT')) return;
+  if ($layer.innerHTML || (a && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT'))) return refreshReceipt();
   load();
 }, 8000);
+
+async function refreshReceipt() {
+  const el = $app.querySelector('.receipt');
+  if (S.screen !== 'topic' || !el) return;
+  try {
+    const { seen } = await api('GET', `/api/topics/${S.topicId}`);
+    const id = Number(el.dataset.id);
+    if (seen && seen.message_id >= id) el.textContent = `Seen ${clock(seen.at)}`;
+  } catch {}
+}
 
 // ---------- welcome: set up or join ----------
 async function renderWelcome() {
@@ -324,7 +341,7 @@ function topicView() {
   const { topic: t, messages, status_request: sr, seen } = S.topic;
   // Under your newest message: "Seen" with the time once the other person has had it on screen, otherwise "Sent".
   const myLast = [...messages].reverse().find(m => m.author === me().id && !m.deleted);
-  const receipt = m => m !== myLast ? '' : `<div class="receipt">${seen && seen.message_id >= m.id ? `Seen ${clock(seen.at)}` : 'Sent'}</div>`;
+  const receipt = m => m !== myLast ? '' : `<div class="receipt" data-id="${m.id}">${seen && seen.message_id >= m.id ? `Seen ${clock(seen.at)}` : 'Sent'}</div>`;
   const msgs = messages.map(m => {
     const mine = m.author === me().id;
     if (m.deleted) return `<div class="msg ${mine ? 'me' : ''}"><span class="who">${nameOf(m.author)}</span><span class="deleted">Message deleted</span></div>`;
@@ -734,4 +751,6 @@ function organize() {
 }
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+// After an update reload, come back to the same screen.
+try { Object.assign(S, JSON.parse(sessionStorage.getItem('shlen:where')) || {}); sessionStorage.removeItem('shlen:where'); } catch {}
 load();
