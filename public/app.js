@@ -75,6 +75,20 @@ function hapticTrigger(el) {
   if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
   el.append(s);
 }
+// A finger that moves (scrolling the list) is not a tap: the click it may end with is dropped before any
+// button sees it, and the hidden switch is put back. Only a finger that stays put picks something.
+let touch = null;
+document.addEventListener('touchstart', e => { const t = e.touches[0]; touch = { x: t.clientX, y: t.clientY, sy: window.scrollY, moved: false }; }, { passive: true, capture: true });
+document.addEventListener('touchmove', e => {
+  const t = e.touches[0];
+  if (touch && Math.hypot(t.clientX - touch.x, t.clientY - touch.y) > 10) touch.moved = true;
+}, { passive: true, capture: true });
+window.addEventListener('scroll', () => { if (touch) touch.moved = true; }, { passive: true, capture: true });
+window.addEventListener('click', e => {
+  if (!touch?.moved || !e.target.closest?.('button, a, [data-haptic]')) return;
+  e.preventDefault(); e.stopPropagation(); touch = null;
+}, true);
+
 // Every button gets the tap feel, wherever it appears (screens, panels, sheets). On iPhone links are
 // left out: a switch inside a link would take the tap and the link wouldn't open.
 const TAPPABLE = 'button, a.btn';
