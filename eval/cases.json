@@ -41,7 +41,11 @@
       { "id": "A37", "draft": "That's not what I said. I said I'd do it after work.", "expect": { "kind": "clear" }, "note": "a literal correction" },
       { "id": "A38", "draft": "Stop. I'm not discussing this over text.", "expect": { "kind": "clear" }, "note": "boundary" },
       { "id": "A39", "draft": "You never listen to me.", "expect": { "kind": "flag", "flagged": ["never"] } },
-      { "id": "A40", "draft": "Every single time we go out you're on your phone.", "expect": { "kind": "flag", "flagged": ["Every single time"] } }
+      { "id": "A40", "draft": "Every single time we go out you're on your phone.", "expect": { "kind": "flag", "flagged": ["Every single time"] } },
+      { "id": "A41", "draft": "Haptic feedback", "conversation": [["A", "Okay. I need to fix the wording of my last message next."]], "expect": { "kind": "clear" }, "note": "a harmless fragment is never questioned" },
+      { "id": "A42", "draft": "Ok", "expect": { "kind": "clear" } },
+      { "id": "A43", "draft": "Testing the new buttons", "expect": { "kind": "clear" } },
+      { "id": "A44", "draft": "Did you see this?", "expect": { "kind": "clear" }, "note": "unclear but harmless: they can ask" }
     ],
     "b": [
       { "id": "B01", "conversation": [["B", "Did the dog go out this afternoon?"]], "draft": "Maybe if you weren't yelling at everyone all morning you'd know.", "expect": { "kind": "flag", "types": ["unanswered", "new_issue"], "question": true } },

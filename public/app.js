@@ -574,7 +574,7 @@ async function send() {
 async function checkAndSend(text) {
   let r;
   const notChecked = why => openSheet(`<b>${esc(why)}</b><p>You can send your message as it is, or keep it as a draft.</p>
-    <button class="btn pri" data-s="send">Send as it is</button><button class="btn" data-s="keep">Keep as draft</button>`,
+    <button class="btn pri" data-s="send">Send as-is</button><button class="btn" data-s="keep">Keep as draft</button>`,
     { send: () => deliver(text), keep: closeSheet });
   try { r = await withTimeout(api('POST', '/api/check', { text, topic_id: S.topicId }), 15000); }
   catch { return notChecked("The check didn't finish."); }
@@ -605,7 +605,7 @@ function flagSheet() {
     ${issues.map(i => `<span class="k">${esc(ISSUE_LABEL[i.type] || 'What may cause a problem')}</span>${i.phrase ? `<div><span class="phrase">${esc(i.phrase)}</span></div>` : ''}<div>${esc(i.why)}</div>`).join('')}
     <span class="k">Suggested version</span><div class="box">${esc(v)}</div>
     ${needsAnswer ? '<p class="small muted">Fill in the part in brackets with your own answer.</p><button class="btn pri" data-s="edit">Write my answer</button>' : '<button class="btn pri" data-s="use">Send this version</button>'}
-    <div class="row2">${needsAnswer ? '' : '<button class="btn" data-s="edit">Edit my own words</button>'}<button class="btn" data-s="orig">Send original</button></div>
+    <div class="row2">${needsAnswer ? '' : '<button class="btn" data-s="edit">Edit my own words</button>'}<button class="btn pri" data-s="orig">Send as-is</button></div>
     ${r.new_topic ? `<button class="btn quiet" data-s="topic">Start a topic: ${esc(r.new_topic)}</button>` : ''}
     <div class="row3"><button class="btn quiet small" data-s="another">Another version</button><button class="btn quiet small" data-s="save">Save</button><button class="btn quiet small" data-s="break">Take a break</button></div>`, {
     use: () => deliver(v, `Sent. ${partner().name} sees only this version.`),
@@ -624,21 +624,24 @@ function flagSheet() {
 function clarifySheet() {
   const { r } = S.pending;
   openSheet(`<b>One quick question, just for you</b><p>${esc(r.question)} Your answer makes it clearer for ${esc(partner().name)}.</p>
+    <button class="btn pri" data-s="asis">Send as-is</button>
     ${r.options.map((o, i) => `<button class="btn" data-s="o" data-i="${i}">${esc(o[0].toUpperCase() + o.slice(1))}</button>`).join('')}
     <button class="btn quiet" data-s="else">Something else</button>`, {
     o: async b => {
       let p; try { p = await withTimeout(api('POST', '/api/check', { text: S.pending.text, topic_id: S.topicId, clarify: r.options[Number(b.dataset.i)] }), 15000); } catch { p = {}; }
       if (p.kind !== 'preview') { closeSheet(); return toast(p.message || "That didn't finish. Add a few words about what you mean, then tap Send."); }
-      previewSheet('Clearer version', p.text); },
+      previewSheet('Clearer version', p.text, S.pending.text); },
     else: () => { closeSheet(); toast('Add a few words about what you mean, then tap Send.'); },
+    asis: () => deliver(S.pending.text),
   });
 }
 
-function previewSheet(title, text) {
+// `original`: the person's own draft, offered as Send as-is next to the suggestion.
+function previewSheet(title, text, original = null) {
   openSheet(`<b>${esc(title)}</b><p class="small muted">Only you can see this. It won't go into your text box. Send it as shown, or keep writing in your own words.</p>
     <div class="box">${esc(text)}</div>
-    <button class="btn pri" data-s="send">Send this version</button><button class="btn" data-s="own">Keep my own words</button>`,
-    { send: () => deliver(text), own: closeSheet });
+    <button class="btn pri" data-s="send">Send this version</button>${original ? '<button class="btn pri" data-s="asis">Send as-is</button>' : ''}<button class="btn" data-s="own">Keep my own words</button>`,
+    { send: () => deliver(text), asis: () => deliver(original), own: closeSheet });
 }
 
 // What the person sees depends on what was written (coaching guide v2, Safety mode).

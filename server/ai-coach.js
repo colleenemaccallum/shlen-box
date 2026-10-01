@@ -66,7 +66,7 @@ Choose exactly one kind:
   2. Another light-touch wording.
   3. If the draft asks for or complains about something, a fuller version in this order: what happened, in plain facts; how the author feels; the specific request; why it would help them both; an opening to work it out together. Otherwise a third light-touch wording.
   If a separate grievance was brought in, the versions keep it but say it separately ("Separately, I want to talk about ..."), and "new_topic" gives a 2 to 5 word neutral name for a separate topic about it; otherwise "new_topic" is "".
-- "clarify": the draft refers to something Person B could easily misread (for example "this" or "it" with no clear meaning). The couple also talk in person, so an empty conversation is not a reason to clarify: a short statement of the author's feeling or answer ("That hurt my feelings.") is clear. Give one short "question" and two or three short "options", each a few words that could replace the unclear words.
+- "clarify": rare. Only when unclear words in the draft could easily be read as blame or criticism Person B would object to (for example "this" or "it" pointing at something Person B did, with no clear meaning). A message that is short, a fragment, a single word, a note, a link, off topic or simply puzzling is "clear": Person B can ask. The couple also talk in person, so an empty conversation is not a reason to clarify: a short statement of the author's feeling or answer ("That hurt my feelings.") is clear. Give one short "question" and two or three short "options", each a few words that could replace the unclear words.
 - "safety": set "safety_type" as the rules describe.
 
 Fill fields you don't need with "" or [].`,
