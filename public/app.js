@@ -36,6 +36,29 @@ const setDraft = (id, v) => { try { v.trim() ? localStorage.setItem(draftKey(id)
 let toastTimer;
 function toast(msg) { $toast.textContent = msg; $toast.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $toast.hidden = true; }, 3500); }
 
+// A short buzz so a tap is felt. Android uses vibrate; iPhone Safari has no vibrate, but toggling a
+// hidden switch control gives its system tap (iOS 17.4 and later). Must run inside the tap itself.
+let $haptic;
+function buzz() {
+  try {
+    if (navigator.vibrate) return void navigator.vibrate(15);
+    if (!$haptic) {
+      $haptic = document.createElement('label');
+      $haptic.ariaHidden = 'true';
+      $haptic.style.cssText = 'position:fixed;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;left:-9px';
+      $haptic.innerHTML = '<input type="checkbox" switch tabindex="-1">';
+      document.body.append($haptic);
+    }
+    $haptic.click();
+  } catch {}
+}
+// Shows a button as working (label, or null to restore it to `idle`) so a slow answer can't be tapped twice.
+function busy(b, label, idle) {
+  if (!b) return;
+  b.disabled = !!label;
+  b.textContent = label || idle || b.textContent;
+}
+
 function openSheet(html, handlers = {}) {
   $layer.innerHTML = `<div class="sheetwrap" data-close="1"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
   $layer.querySelector('.sheetwrap').addEventListener('click', e => { if (e.target.dataset.close) closeSheet(); });
@@ -421,12 +444,21 @@ function setStatus(to) {
     { ok: () => { const checkin = document.getElementById('checkin').value; closeSheet(); run(async () => { await api('POST', `/api/topics/${S.topicId}/status`, { to, checkin }); toast(`Asked ${partner().name} to confirm.`); }); }, no: closeSheet });
 }
 
+// One send at a time: a second tap while the first is still going does nothing.
+let sending = false;
 async function deliver(text, msg) {
+  if (sending) return;
+  sending = true;
+  $layer.querySelectorAll('.sheet .btn').forEach(b => { b.disabled = true; });
   try {
     await api('POST', `/api/topics/${S.topicId}/messages`, { text });
     setDraft(S.topicId, ''); closeSheet();
+    const box = document.getElementById('draft');
+    if (box) box.value = '';
+    buzz();
     toast(msg || `Sent. ${partner().name} sees only what you sent.`);
   } catch (e) { closeSheet(); toast(e.message); }
+  sending = false;
   await load();
 }
 
@@ -435,6 +467,14 @@ async function send() {
   if (!text) return toast('Write something first.');
   setDraft(S.topicId, text);
   if (pause()) return toast(`Kept as a private draft. You can send it after ${clock(pause().end)}.`);
+  const b = $app.querySelector('[data-act="send"]');
+  if (sending || b?.disabled) return;
+  buzz();
+  busy(b, 'Sending…');
+  try { await checkAndSend(text); } finally { busy(b, null, 'Send'); }
+}
+
+async function checkAndSend(text) {
   let r;
   const notChecked = why => openSheet(`<b>${esc(why)}</b><p>You can send your message as it is, or keep it as a draft.</p>
     <button class="btn pri" data-s="send">Send as it is</button><button class="btn" data-s="keep">Keep as draft</button>`,
@@ -550,17 +590,24 @@ function deleteMessage(id) {
     async () => { await api('DELETE', `/api/messages/${id}`); toast('Deleted.'); });
 }
 
+const ORGANIZE_QUESTIONS = ['What happened?', 'How did it affect you?', 'What do you need them to understand?', 'What would you like to happen next?'];
+
 function organize() {
-  const qs = ['What happened?', 'How did it affect you?', 'What do you need them to understand?', 'What would you like to happen next?'];
-  openSheet(`<b>Help me organize this</b><p class="small muted">All optional. Your answers are put together into a version you can send or skip.</p>
-    ${qs.map((q, i) => `<label class="k" for="o${i}">${q}</label><input type="text" id="o${i}" maxlength="300">`).join('')}
+  openSheet(`<b>Help me organize this</b><p class="small muted">All optional. Your answers are put together into one message you can send or skip.</p>
+    ${ORGANIZE_QUESTIONS.map((q, i) => `<label class="k" for="o${i}">${q}</label><input type="text" id="o${i}" maxlength="300">`).join('')}
     <button class="btn pri" data-s="make">Put it together</button><button class="btn quiet" data-s="close">Cancel</button>`, {
     close: closeSheet,
-    make: () => {
-      const f = [0, 1, 2, 3].map(i => document.getElementById('o' + i).value.trim().replace(/[.!?]$/, ''));
-      const parts = [f[0] && `When ${f[0]},`, f[1] && `I felt ${f[1].replace(/^i felt /i, '')}.`, f[2] && `What I most want you to understand is ${f[2]}.`, f[3] && `Could we ${f[3].replace(/^could we /i, '')}?`].filter(Boolean);
-      if (!parts.length) return closeSheet();
-      previewSheet('Your answers, put together', parts.join(' '));
+    make: async b => {
+      if (b.disabled) return;
+      const answers = ORGANIZE_QUESTIONS.map((_, i) => document.getElementById('o' + i).value.trim());
+      if (!answers.some(Boolean)) return closeSheet();
+      buzz();
+      busy(b, 'Putting it together…');
+      let r;
+      try { r = await withTimeout(api('POST', '/api/organize', { answers, topic_id: S.topicId }), 20000); }
+      catch (e) { busy(b, null, 'Put it together'); return toast(e.message === 'timeout' ? "That didn't finish. Please try again." : e.message); }
+      if (r.kind === 'safety') { S.pending = { text: answers.filter(Boolean).join(' ') }; return safetySheet(true, r.safety_type || ''); }
+      previewSheet('Your answers, put together', r.text);
     },
   });
 }

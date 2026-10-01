@@ -167,3 +167,23 @@ test('static files are served and path traversal is blocked', async () => {
   assert.equal((await fetch(base + '/')).status, 200);
   assert.equal((await fetch(base + '/..%2fpackage.json')).status, 404);
 });
+
+test('help me organize this turns answers into full sentences, in order, with no stock lead-ins', async () => {
+  const r = await alex('POST', '/api/organize', { topic_id: topicId,
+    answers: ['the dog got heavier', 'She is now very heavy to pick up', 'Please stop feeding her extra', 'I would like her to lose weight'] });
+  assert.equal(r.body.kind, 'preview');
+  assert.equal(r.body.text, 'The dog got heavier. She is now very heavy to pick up. Please stop feeding her extra. I would like her to lose weight.');
+  assert.equal((await alex('POST', '/api/organize', { answers: ['', ' '] })).status, 400);
+  assert.equal((await alex('POST', '/api/organize', { answers: ['I will hurt you'] })).body.kind, 'safety');
+});
+
+test('the same words sent twice within seconds are one message, not two', async () => {
+  const a = await alex('POST', `/api/topics/${topicId}/messages`, { text: 'Double tap test.' });
+  const b = await alex('POST', `/api/topics/${topicId}/messages`, { text: 'Double tap test.' });
+  assert.equal(b.body.id, a.body.id);
+  const count = () => db.prepare("SELECT COUNT(*) AS n FROM messages WHERE text = 'Double tap test.'").get().n;
+  assert.equal(count(), 1);
+  clock = new Date(clock.getTime() + 60e3);
+  await alex('POST', `/api/topics/${topicId}/messages`, { text: 'Double tap test.' });
+  assert.equal(count(), 2, 'saying it again later is a new message');
+});

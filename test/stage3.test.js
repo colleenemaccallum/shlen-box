@@ -209,3 +209,16 @@ test('the AI key can be connected in Settings by the person who set up, and is n
   assert.equal((await a('GET', '/api/state')).body.stand_in_coach, true);
   s2.close();
 });
+
+test('help me organize this asks the AI for one coherent message, names hidden, and falls back when it fails', async () => {
+  next.push({ kind: 'message', safety_type: '', text: 'Person B, the dog has gotten heavy to pick up. Please stop feeding her extra; I would like her to lose weight.' });
+  const answers = ['the dog got heavier', 'She is now very heavy to pick up', 'Please stop feeding her extra', 'Could we I would like her to lose weight'];
+  const r = (await alex('POST', '/api/organize', { answers, topic_id: topicId })).body;
+  assert.deepEqual(r, { kind: 'preview', text: 'Jordan, the dog has gotten heavy to pick up. Please stop feeding her extra; I would like her to lose weight.' });
+  assert.match(sentText(), /<answers>/);
+  assert.doesNotMatch(sentText(), /Secret from another topic|Jordan|Alex/);
+  next.push(new Error('down'));
+  const f = (await alex('POST', '/api/organize', { answers, topic_id: topicId })).body;
+  assert.equal(f.kind, 'preview');
+  assert.match(f.text, /^The dog got heavier\. She is now/);
+});

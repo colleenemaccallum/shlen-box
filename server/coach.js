@@ -3,6 +3,7 @@
 //
 //   check(draft)             -> { kind: 'clear' } | { kind: 'flag', phrase, why, versions[] }
 //                               | { kind: 'clarify', question, options[] } | { kind: 'safety' }
+//   organize(answers)       -> { kind: 'preview', text } | { kind: 'safety' }
 //   understand(text)         -> { kind: 'help', main, request, ask } | { kind: 'safety' }
 //   draftCard(topic, msgs)   -> [{ section, text, label, account_of }]
 
@@ -57,6 +58,17 @@ export function check(draft) {
 
 export function clarify(draft, answer) {
   return draft.replace(/can'?t keep doing this/i, `can't keep doing ${answer}`);
+}
+
+// Each answer becomes its own sentence, in the order asked. No stock lead-ins: they turned answers that
+// were already sentences into a jumble ("Could we I would like ...").
+export function organize(answers) {
+  if (answers.some(a => THREAT.test(a))) return { kind: 'safety' };
+  const sentence = a => {
+    const t = a.trim().replace(/\s+/g, ' ');
+    return t.charAt(0).toUpperCase() + t.slice(1) + (/[.!?]$/.test(t) ? '' : '.');
+  };
+  return { kind: 'preview', text: answers.filter(a => a && a.trim()).map(sentence).join(' ') };
 }
 
 export function understand(text, authorName) {

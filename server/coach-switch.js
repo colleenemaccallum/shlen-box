@@ -32,6 +32,7 @@ export function createCoachSwitch({ db, now = () => new Date(), capUsd = 10, env
     get STAND_IN() { return active() === standIn; },
     check: (...a) => active().check(...a),
     clarify: (...a) => active().clarify(...a),
+    organize: (...a) => active().organize(...a),
     understand: (...a) => active().understand(...a),
     draftCard: (...a) => active().draftCard(...a),
     status: () => ({ connected: !!(envKey || storedKey()), from_settings: !envKey && !!storedKey(),

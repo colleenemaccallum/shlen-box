@@ -25,6 +25,7 @@ const fail = (status, message) => { throw new HttpError(status, message); };
 const hash = t => crypto.createHash('sha256').update(t).digest('hex');
 
 export const LOCK_AFTER_MS = 5 * 60e3;
+export const DUPLICATE_WINDOW_MS = 30e3;
 
 export function createApp({ db, now = () => new Date(), coach = stand_in, log = () => {}, secureCookies = false,
   passkeys = null, notifier = { notify: () => [] }, vapidPublicKey = null }) {
@@ -202,10 +203,26 @@ export function createApp({ db, now = () => new Date(), coach = stand_in, log = 
     return coached(() => coach.check(draft, ctx), true);
   });
 
+  // Help me organize this: the person's short answers, put together into one message they can send or skip.
+  // Nothing is stored. If the AI can't answer, the simple version is used so the button always works.
+  route('POST', '/api/organize', async ({ me, body }) => {
+    const answers = [0, 1, 2, 3].map(i => typeof body.answers?.[i] === 'string' ? body.answers[i].slice(0, 300) : '');
+    if (!answers.some(a => a.trim())) fail(400, 'Answer at least one question first.');
+    const ctx = coachContext(Number(body.topic_id) || null, me);
+    try { return await (coach.organize || stand_in.organize)(answers, ctx); } catch (e) {
+      if (!(e instanceof CoachUnavailable)) throw e;
+      return stand_in.organize(answers);
+    }
+  });
+
   route('POST', '/api/topics/:id/messages', ({ me, params, body }) => {
     const t = topicOr404(params.id);
     const msg = text(body.text, rules.MESSAGE_MAX, 'The message');
     if (activePause()) fail(423, 'Conversation is paused. Your message is kept as a private draft on your phone.');
+    // A second tap (or a retry on a slow connection) sends the same words again within seconds:
+    // that is the same message, not a new one.
+    const last = q('SELECT id, text, created FROM messages WHERE topic_id = ? AND author = ? AND deleted = 0 ORDER BY id DESC LIMIT 1').get(t.id, me.id);
+    if (last && last.text === msg && now() - new Date(last.created) < DUPLICATE_WINDOW_MS) return { id: last.id, duplicate: true };
     const { lastInsertRowid: id } = tx(db, () => {
       if (t.status === 'ok') q("UPDATE topics SET status = 'open', checkin = NULL WHERE id = ?").run(t.id);
       touch(t.id);
