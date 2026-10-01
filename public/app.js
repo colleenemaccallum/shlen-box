@@ -51,6 +51,16 @@ function hapticTrigger(el) {
   if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
   el.append(s);
 }
+// Every button gets the tap feel, wherever it appears (screens, panels, sheets).
+const TAPPABLE = 'button, a.btn';
+if (IOS) {
+  const add = root => root.querySelectorAll?.(TAPPABLE).forEach(hapticTrigger);
+  new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if (n.matches?.(TAPPABLE)) hapticTrigger(n); add(n); })))
+    .observe(document.documentElement, { childList: true, subtree: true });
+  add(document);
+} else {
+  document.addEventListener('click', e => { if (e.target.closest?.(TAPPABLE) && !e.target.closest('button:disabled')) buzz(); }, true);
+}
 
 // Shows a button as working (label, or null to restore it to `idle`) so a slow answer can't be tapped twice.
 function busy(b, label, idle) {
