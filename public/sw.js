@@ -1,6 +1,7 @@
 // Service worker: keeps the app shell available offline and shows content-free notifications.
-const SHELL = 'shlen-shell-v1';
-const FILES = ['/', '/app.css', '/app.js', '/webauthn.js', '/icon.svg', '/manifest.webmanifest'];
+const SHELL = 'shlen-shell-v2';
+const FILES = ['/', '/app.css', '/app.js', '/webauthn.js', '/icon.svg', '/manifest.webmanifest',
+  '/fonts/nunito-latin-800-normal.woff2', '/fonts/figtree-latin-400-normal.woff2', '/fonts/figtree-latin-700-normal.woff2'];
 
 self.addEventListener('install', e => { e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== SHELL).map(k => caches.delete(k))))); self.clients.claim(); });

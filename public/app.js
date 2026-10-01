@@ -136,12 +136,15 @@ async function enableNotifications() {
 }
 
 // ---------- screens ----------
+const BRAND = '<span class="brand"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="9" cy="12" r="6.5"/><circle cx="15" cy="12" r="6.5"/></svg>Shlen Box</span>';
 function render() {
   if (S.error) { $app.innerHTML = `<h1>Shlen Box</h1><p class="error">${esc(S.error)}</p><button class="btn" id="retry">Try again</button>`;
     document.getElementById('retry').onclick = () => { S.error = null; load(); }; return; }
   if (!S.data) return;
   const view = { home, topic: topicView, card: cardView, pause: pauseView, urgent: urgentView, settings }[S.screen] || home;
   $app.innerHTML = view();
+  // The pause screen tints the whole home screen.
+  document.body.classList.toggle('paused', view === home && !!S.data.partner && !!pause());
   bind();
 }
 
@@ -168,6 +171,21 @@ function pauseBanner() {
     ${mine ? '<button class="btn" data-act="endpause">I\'m ready to talk now</button>' : ''}</div>`;
 }
 
+// Home during a pause: breathe while you wait.
+function pauseCalm() {
+  const p = pause(), mine = p.by_person === me().id, mins = Math.max(1, Math.round((new Date(p.end) - new Date()) / 60000));
+  const left = mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`;
+  return `<div class="calm" role="status">
+    <div class="breath" aria-hidden="true"></div>
+    <p class="small">Breathe in as it grows, out as it shrinks.</p>
+    <p><b>${mine ? 'You asked for time to process.' : `${esc(partner().name)} asked for time to process.`}</b></p>
+    ${p.note ? `<p class="small muted">“${esc(p.note)}”</p>` : ''}
+    <div class="time">${clock(p.end)}</div>
+    <p class="small">Talking reopens then, in ${left}. Urgent logistics stays open, and you can still write private drafts.</p>
+    <button class="btn warn" data-act="urgent">Urgent logistics</button>
+    ${mine ? '<button class="btn quiet" data-act="endpause">I\'m ready to talk now</button>' : ''}</div>`;
+}
+
 function home() {
   const d = S.data;
   if (!d.partner) return `<h1>Shlen Box</h1>
@@ -184,15 +202,15 @@ function home() {
       ${last ? `<span class="small muted">${nameOf(last.author)}: ${last.deleted ? 'Message deleted' : esc(last.text.slice(0, 60)) + (last.text.length > 60 ? '…' : '')}</span>` : '<span class="small muted">Nothing here yet</span>'}</button>`;
   }).join('');
   const recent = d.urgent.filter(u => new Date() - new Date(u.created) < 24 * 3600e3);
-  return `<div class="top"><h1>Shlen Box</h1><button class="iconbtn" data-act="settings">Settings</button></div>
+  return `<div class="top"><h1>${BRAND}</h1><button class="iconbtn" data-act="settings">Settings</button></div>
     ${d.stand_in_coach ? '<p class="banner">Test version: the coach is a simple stand-in, not the real AI yet.</p>' : ''}
     ${d.passkeys_available && !d.has_passkey && passkeysSupported() ? '<button class="btn" data-act="passkey">Turn on Face ID or fingerprint sign-in</button>' : ''}
-    ${stateLine()}${pauseBanner()}
+    ${pause() ? pauseCalm() : stateLine()}
     ${recent.length ? `<button class="btn warn" data-act="urgent">Urgent messages (${recent.length} today)</button>` : ''}
     <div class="list">${topics}</div>
     <button class="btn quiet" data-act="newtopic">+ New topic</button>
     <div class="spacer"></div>
-    ${pause() ? '<button class="btn warn" data-act="urgent">Urgent logistics</button>'
+    ${pause() ? ''
       : '<div class="row2"><button class="btn" data-act="pause">Take a break</button><button class="btn pri" data-act="write">Write something</button></div>'}`;
 }
 
@@ -224,7 +242,7 @@ function cardView() {
   const label = p => p.label === 'agreed' ? '<span class="lbl agreed">✓ Agreed by both</span>'
     : p.label === 'account' ? `<span class="lbl account">${p.account_of === me().id ? 'Your' : esc(partner().name) + '’s'} account</span>`
     : `<span class="lbl draft">Draft, not agreed yet${p.confirmed_by.length ? (p.confirmed_by.includes(me().id) ? ' · you confirmed' : ` · ${esc(partner().name)} confirmed`) : ''}</span>`;
-  const pts = card.map(p => `<div class="pt"><span class="k">${esc(p.section)}</span>${label(p)}<span>${esc(p.text)}</span>
+  const pts = card.map(p => `<div class="pt ${p.label}"><span class="k">${esc(p.section)}</span>${label(p)}<span>${esc(p.text)}</span>
     ${p.label === 'draft' && !p.confirmed_by.includes(me().id) ? `<button class="confirm" data-conf="${p.id}">This is right</button>` : ''}</div>`).join('');
   let status;
   if (sr) status = sr.by_person === me().id
@@ -237,7 +255,7 @@ function cardView() {
   return `<div class="top"><button class="iconbtn" data-act="topic">‹ Messages</button><span>${pill(t)}</span></div>
     <h2>Where we are: ${esc(t.name)}</h2>
     <p class="small muted">Drafted from what you both actually wrote. A point only counts as agreed when both of you confirm it.</p>
-    ${card.length ? `<div class="card">${pts}</div>` : '<p class="muted">No summary yet.</p>'}
+    ${card.length ? `<div class="tl">${pts}</div>` : '<p class="muted">No summary yet.</p>'}
     <button class="btn" data-act="refreshcard">${card.length ? 'Refresh from new messages' : 'Draft a summary'}</button>
     <span class="k">Status</span>${status}
     <span class="k">Topic</span>${del}`;
