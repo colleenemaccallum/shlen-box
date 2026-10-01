@@ -51,11 +51,12 @@ function hapticTrigger(el) {
   if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
   el.append(s);
 }
-// Every button gets the tap feel, wherever it appears (screens, panels, sheets).
+// Every button gets the tap feel, wherever it appears (screens, panels, sheets). On iPhone links are
+// left out: a switch inside a link would take the tap and the link wouldn't open.
 const TAPPABLE = 'button, a.btn';
 if (IOS) {
-  const add = root => root.querySelectorAll?.(TAPPABLE).forEach(hapticTrigger);
-  new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if (n.matches?.(TAPPABLE)) hapticTrigger(n); add(n); })))
+  const add = root => root.querySelectorAll?.('button').forEach(hapticTrigger);
+  new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if (n.matches?.('button')) hapticTrigger(n); add(n); })))
     .observe(document.documentElement, { childList: true, subtree: true });
   add(document);
 } else {
